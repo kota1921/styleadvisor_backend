@@ -14,7 +14,7 @@ def validate_jwt(token: str, secret: str) -> Dict[str, Any]:
         raise ValueError("invalid signature")
     except jwt.DecodeError:
         raise ValueError("invalid token")
-    for key in ("userId", "iat", "exp"):
+    for key in ("deviceId", "iat", "exp"):
         if key not in payload:
             raise ValueError(f"missing claim {key}")
     try:

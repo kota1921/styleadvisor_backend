@@ -9,10 +9,10 @@ from tools.jwt_validator import validate_jwt
 
 def test_validate_ok():
     secret = "v_secret"
-    user_id = str(uuid.uuid4())
-    token = generate_jwt(user_id, secret, ttl_seconds=60)
+    device_id = str(uuid.uuid4())
+    token = generate_jwt(device_id, secret, ttl_seconds=60)
     payload = validate_jwt(token, secret)
-    assert payload["userId"] == user_id
+    assert payload["deviceId"] == device_id
     assert payload["exp"] - payload["iat"] == 60
 
 
@@ -35,12 +35,12 @@ def test_validate_invalid_signature():
 def test_validate_missing_claim():
     secret = "v_secret"
     now = int(time.time())
-    # Без userId
+    # Без deviceId
     payload = {"iat": now, "exp": now + 60}
     token = jwt.encode(payload, secret, algorithm="HS256", headers={"typ": "JWT"})
     with pytest.raises(ValueError) as e:
         validate_jwt(token, secret)
-    assert "missing claim userId" == str(e.value)
+    assert "missing claim deviceId" == str(e.value)
 
 
 def test_validate_empty_token():
@@ -52,7 +52,7 @@ def test_validate_empty_token():
 def test_validate_exp_le_iat():
     secret = "v_secret"
     now = int(time.time())
-    payload = {"userId": "u3", "iat": now, "exp": now}  # exp == iat
+    payload = {"deviceId": "d3", "iat": now, "exp": now}  # exp == iat
     token = jwt.encode(payload, secret, algorithm="HS256")
     with pytest.raises(ValueError) as e:
         validate_jwt(token, secret)
