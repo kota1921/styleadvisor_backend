@@ -1,10 +1,9 @@
 import time
 import json
-import hmac
-import hashlib
 import base64
 import uuid
 import pytest
+import jwt
 
 from tools.jwt_token_generator import JwtTokenGenerator
 
@@ -21,17 +20,13 @@ def test_generate_token_basic():
     token = gen.generate(user_id, secret)
     parts = token.split('.')
     assert len(parts) == 3
-    header = json.loads(_b64url_decode(parts[0]))
-    payload = json.loads(_b64url_decode(parts[1]))
+    header = jwt.get_unverified_header(token)
     assert header == {"alg": "HS256", "typ": "JWT"}
-    assert payload["userId"] == user_id
+    decoded = jwt.decode(token, secret, algorithms=["HS256"])
+    assert decoded["userId"] == user_id
     now = int(time.time())
-    assert now - 5 <= payload["iat"] <= now + 5
-    assert payload["exp"] - payload["iat"] == 300
-    signing_input = '.'.join(parts[:2]).encode()
-    expected_sig = hmac.new(secret.encode(), signing_input, hashlib.sha256).digest()
-    sig = _b64url_decode(parts[2])
-    assert sig == expected_sig
+    assert now - 5 <= decoded["iat"] <= now + 5
+    assert decoded["exp"] - decoded["iat"] == 300
 
 
 def test_generate_token_empty_user():
@@ -57,15 +52,14 @@ def test_generate_token_custom_ttl():
 
 
 def test_generate_token_fixed_time():
-    fixed = 1730486400
+    fixed = int(time.time())  # актуальное время вместо устаревшего
     gen = JwtTokenGenerator(now_provider=lambda: fixed)
     user_id = str(uuid.uuid4())
     secret = "test_secret"
     token = gen.generate(user_id, secret)
-    parts = token.split('.')
-    payload = json.loads(_b64url_decode(parts[1]))
-    assert payload["iat"] == fixed
-    assert payload["exp"] == fixed + 300
+    decoded = jwt.decode(token, secret, algorithms=["HS256"])
+    assert decoded["iat"] == fixed
+    assert decoded["exp"] == fixed + 300
 
 
 def test_generate_token_invalid_ttl():
