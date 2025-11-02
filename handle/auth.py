@@ -30,25 +30,26 @@ def _extract_token(req: https_fn.Request) -> str | None:
 
 def get_access_token(req: https_fn.Request) -> https_fn.Response:
     if req.method.upper() != "POST":
-        return https_fn.Response(json.dumps({"isValid": False, "token": None}), status=405, headers={"Content-Type": "application/json"})
+        return https_fn.Response(json.dumps({"isValid": False, "token": None, "error": "method not allowed"}), status=405, headers={"Content-Type": "application/json"})
 
     try:
         token = _extract_token(req)
     except Exception as e:  # на случай неожиданных форматов
         logger.error("extract error: %s", e)
-        return https_fn.Response(json.dumps({"isValid": False, "token": None}), status=400, headers={"Content-Type": "application/json"})
+        return https_fn.Response(json.dumps({"isValid": False, "token": None, "error": "bad request"}), status=400, headers={"Content-Type": "application/json"})
 
     if not token:
-        return https_fn.Response(json.dumps({"isValid": False, "token": None}), status=400, headers={"Content-Type": "application/json"})
+        return https_fn.Response(json.dumps({"isValid": False, "token": None, "error": "missing token"}), status=400, headers={"Content-Type": "application/json"})
 
     try:
         validate_jwt(token, SECRET)
         body = {"isValid": True, "token": token}
         return https_fn.Response(json.dumps(body), status=200, headers={"Content-Type": "application/json"})
-    except ValueError:
-        body = {"isValid": False, "token": token}
+    except ValueError as e:
+        logger.info("validation failed: %s", e)
+        body = {"isValid": False, "token": token, "error": str(e)}
         return https_fn.Response(json.dumps(body), status=400, headers={"Content-Type": "application/json"})
     except Exception as e:  # чтобы не получить 500 в ответ
         logger.error("unexpected validation error: %s", e)
-        body = {"isValid": False, "token": token}
+        body = {"isValid": False, "token": token, "error": "internal validation error"}
         return https_fn.Response(json.dumps(body), status=400, headers={"Content-Type": "application/json"})
