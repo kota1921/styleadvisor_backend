@@ -1,0 +1,1 @@
+git fetch --tags --force --progress --depth=1 -- ssh://git@bitbucket.fun.co:7999/ios/ifunny-client.git +refs/heads/*:refs/remotes/origin/* # timeout=100
