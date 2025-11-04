@@ -45,8 +45,8 @@ def process_google_auth(db_session, auth_token: str | None, device_id: str | Non
             raise UpstreamError("upstream error") from e
         raise InvalidTokenError("invalid token") from e
 
-    google_id = payload.get("google_id")
-    email = payload.get("email")
+    google_id = payload["google_id"]
+    email = payload["email"]
     name = payload.get("name")
 
     access_token = access_token_factory(identity=google_id, expires_delta=timedelta(seconds=ttl_seconds))

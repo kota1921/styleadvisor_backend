@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 from typing import Optional, Dict, Any
 
-from auth.models import User, Session
+from auth.models import User
+from auth.services.session_service import upsert_session
+
+
+def _hash_token(token: str) -> str:
+    return sha256(token.encode()).hexdigest()
 
 
 def authenticate_google_payload(
@@ -26,16 +32,18 @@ def authenticate_google_payload(
             last_login=now,
         )
         db_session.add(user)
-        db_session.flush()  # чтобы получить user.id до создания Session
+        db_session.flush()
     else:
         user.last_login = now
 
     expires_at = now + timedelta(seconds=expires_in_seconds)
-    session_obj = Session(
+    access_token_hash = _hash_token(access_token)
+    session_obj = upsert_session(
+        db_session=db_session,
         user_id=user.id,
-        access_token=access_token,
+        device_id=device_id,
+        access_token_hash=access_token_hash,
         expires_at=expires_at,
-        device_info=device_id,
     )
     db_session.add(session_obj)
     db_session.commit()
@@ -49,4 +57,3 @@ def authenticate_google_payload(
             "name": user.name,
         },
     }
-

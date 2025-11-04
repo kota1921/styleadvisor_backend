@@ -1,4 +1,3 @@
-from datetime import datetime, timedelta, timezone
 from tools.logger_config import TimedFileLoggerConfigurator
 
 from flask import request, jsonify, Flask
@@ -6,7 +5,8 @@ from flask_jwt_extended import JWTManager, create_access_token
 
 from auth.services.google_auth_service import process_google_auth
 from auth.exceptions import MissingCredentialsError, InvalidTokenError, UpstreamError
-from auth.models import User, Session
+from auth.services.session_service import revoke_session, get_session_by_hash, revoke_session_by_hash
+from auth.models import User
 from base_response import BaseResponse
 from db import db
 
@@ -46,6 +46,10 @@ def google_auth():
             access_token_factory=create_access_token,
             ttl_seconds=ACCESS_TOKEN_TTL_SECONDS,
         )
+        # Логируем факт логина (без email для избегания PII):
+        user_id = payload.get("user", {}).get("id")
+        google_id = payload.get("user", {}).get("email")  # если нужно заменить на отдельное поле google_id
+        app.logger.info(f"login user_id={user_id} email={google_id}")
         return jsonify(BaseResponse(status_code=status, data=payload).to_dict()), status
     except MissingCredentialsError:
         return jsonify({"error": "Missing credentials"}), 400
@@ -53,6 +57,24 @@ def google_auth():
         return jsonify({"error": "Missing credentials"}), 401
     except UpstreamError:
         return jsonify({"error": "Upstream error"}), 502
+
+
+@app.route('/auth/logout', methods=['POST'])
+def logout():
+    token_hash = request.headers.get("X-Access-Token", "").strip()
+    if not token_hash:
+        return jsonify({"error": "Missing token"}), 400
+    session_obj = get_session_by_hash(db.session, token_hash)
+    if not session_obj:
+        return jsonify({"error": "Session not found"}), 404
+    if session_obj.revoked:
+        return jsonify({"error": "Session already revoked"}), 400
+    success = revoke_session_by_hash(db.session, token_hash)
+    if not success:
+        return jsonify({"error": "Unable to revoke"}), 500
+    db.session.commit()
+    app.logger.info(f"logout user_id={session_obj.user_id} session_id={session_obj.id}")
+    return jsonify(BaseResponse(status_code=200, data={"message": "logged out"}).to_dict()), 200
 
 
 if __name__ == '__main__':
