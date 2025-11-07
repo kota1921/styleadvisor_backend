@@ -1,4 +1,9 @@
-#!/usr/bin/env bash
+#!/bin/bash
+# Проверка, что запущено под bash
+if [ -z "$BASH_VERSION" ]; then
+    echo "[ERROR] Запускайте скрипт через bash, а не sh."
+    exit 1
+fi
 set -euo pipefail
 
 REPO_URL="git@github.com:kota1921/styleadvisor_backend.git"
@@ -75,4 +80,3 @@ else
     log_error "Ошибка запуска gunicorn"
     exit 1
 fi
-
