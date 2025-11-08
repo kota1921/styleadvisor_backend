@@ -58,7 +58,9 @@ fi
 if ! pip show pytest >/dev/null 2>&1; then
     pip install pytest
 fi
-if pytest; then
+# Добавляем корень проекта в PYTHONPATH чтобы импорты вида 'from auth....' работали
+export PYTHONPATH="$APP_DIR"
+if PYTHONPATH="$APP_DIR" pytest; then
     log_ok "Тесты прошли успешно"
 else
     log_error "Тесты не прошли"
