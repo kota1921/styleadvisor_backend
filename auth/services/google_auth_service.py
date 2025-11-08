@@ -6,6 +6,7 @@ from datetime import timedelta
 from auth.google_verifier import verify_google_token
 from auth.services.auth_service import authenticate_google_payload
 from auth.exceptions import MissingCredentialsError, InvalidTokenError, UpstreamError
+from base_response import BaseResponse
 
 
 def process_google_auth(db_session, auth_token: str | None, device_id: str | None, access_token_factory, ttl_seconds: int) -> Tuple[int, dict]:
@@ -60,3 +61,23 @@ def process_google_auth(db_session, auth_token: str | None, device_id: str | Non
         expires_in_seconds=ttl_seconds,
     )
     return 200, result
+
+
+def login_via_google(
+    db_session,
+    auth_token: str | None,
+    device_id: str | None,
+    access_token_factory,
+    ttl_seconds: int,
+    logger,
+):
+    status, payload = process_google_auth(
+        db_session=db_session,
+        auth_token=auth_token,
+        device_id=device_id,
+        access_token_factory=access_token_factory,
+        ttl_seconds=ttl_seconds,
+    )
+    user_id = payload.get("user", {}).get("id")
+    logger.info(f"login user_id={user_id}")
+    return status, BaseResponse(status_code=status, data=payload).to_dict()

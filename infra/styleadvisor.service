@@ -1,0 +1,16 @@
+[Unit]
+Description=StyleAdvisor Flask App
+After=network.target
+
+[Service]
+User=server
+WorkingDirectory=/home/server/styleadvisor_backend
+Environment=PYTHONUNBUFFERED=1
+Environment=DOMAIN=fitmind.at/
+ExecStart=/home/server/styleadvisor_backend/.venv/bin/gunicorn -w 4 server:app --bind 127.0.0.1:8000
+Restart=always
+TimeoutStartSec=10
+
+[Install]
+WantedBy=multi-user.target
+
