@@ -12,6 +12,7 @@ PYTHON_BIN="python3"
 VENVDIR="$APP_DIR/.venv"
 REQFILE="$APP_DIR/requirements.txt"
 GUNICORN_CMD="gunicorn -w 4 server:app --bind 0.0.0.0:8000"
+LOG_DIR="$APP_DIR/logs"
 
 function log_error {
     echo -e "\033[0;31m[ERROR]\033[0m $1"
@@ -72,13 +73,25 @@ if ! pip show gunicorn >/dev/null 2>&1; then
     pip install gunicorn
 fi
 
+mkdir -p "$LOG_DIR"
+
 log_ok "Запуск продакшен сервера..."
-$GUNICORN_CMD &
-GUNICORN_PID=$!
-sleep 3
-if ps -p $GUNICORN_PID > /dev/null; then
-    log_ok "Сервер успешно запущен (PID $GUNICORN_PID)"
+if [ "${DRY_RUN:-0}" = "1" ]; then
+    log_ok "DRY_RUN=1 — запуск пропущен"
+    exit 0
+fi
+
+if [ "${FOREGROUND:-0}" = "1" ]; then
+    log_ok "FOREGROUND=1 — вывод логов в консоль"
+    exec $GUNICORN_CMD --access-logfile - --error-logfile -
 else
-    log_error "Ошибка запуска gunicorn"
-    exit 1
+    $GUNICORN_CMD --access-logfile "$LOG_DIR/access.log" --error-logfile "$LOG_DIR/error.log" &
+    GUNICORN_PID=$!
+    sleep 3
+    if ps -p $GUNICORN_PID > /dev/null; then
+        log_ok "Сервер успешно запущен (PID $GUNICORN_PID). Логи: tail -f $LOG_DIR/error.log"
+    else
+        log_error "Ошибка запуска gunicorn"
+        exit 1
+    fi
 fi
