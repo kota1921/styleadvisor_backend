@@ -17,3 +17,7 @@ firebase-debug.log
 
 # MacOS
 .DS_Store
+
+logs/
+users.db
+instance/users.db
