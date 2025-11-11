@@ -2,6 +2,7 @@ from tools.logger_config import TimedFileLoggerConfigurator
 
 from flask import request, jsonify, Flask
 from flask_jwt_extended import JWTManager, create_access_token
+from werkzeug.exceptions import HTTPException
 
 from auth.services.google_auth_service import process_google_auth
 from auth.exceptions import MissingCredentialsError, InvalidTokenError, UpstreamError
@@ -25,7 +26,9 @@ TimedFileLoggerConfigurator().configure(app)
 
 @app.errorhandler(Exception)
 def handle_unexpected_error(e):
-    app.logger.error(f"unexpected error: {type(e).__name__}")
+    if isinstance(e, HTTPException):
+        return e
+    app.logger.exception(f"unexpected error: {type(e).__name__}")
     return jsonify({"error": "Internal server error"}), 500
 
 
