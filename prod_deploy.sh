@@ -66,15 +66,32 @@ fi
 BRANCH=${BRANCH:-"main"}
 if [ -d .git ]; then
   print_progress 1 "Обновление git (${BRANCH})..."
-  if git fetch origin "$BRANCH" >/dev/null 2>&1 && \
-     git checkout "$BRANCH" >/dev/null 2>&1 && \
-     git pull --ff-only origin "$BRANCH" >/dev/null 2>&1; then
-    step_done "git checkout ${BRANCH} успешен"
-  else
-    step_fail "git checkout/pull не удался"
+
+  # Автоматически добавить github.com в known_hosts если нужно
+  if ! ssh-keygen -F github.com >/dev/null 2>&1; then
+    ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null || true
+  fi
+
+  # Fetch без перенаправления чтобы видеть ошибки
+  if ! git fetch origin "$BRANCH" 2>&1 | grep -v "Fetching"; then
+    step_fail "git fetch не удался"
+    git remote -v
+    exit 1
+  fi
+
+  if ! git checkout "$BRANCH" >/dev/null 2>&1; then
+    step_fail "git checkout не удался"
     git status
     exit 1
   fi
+
+  if ! git pull --ff-only origin "$BRANCH" >/dev/null 2>&1; then
+    step_fail "git pull не удался"
+    git status
+    exit 1
+  fi
+
+  step_done "git checkout ${BRANCH} успешен"
 else
   print_progress 1 "Git репозиторий не найден..."
   step_done "Пропуск git (запуск из копии кода)"
