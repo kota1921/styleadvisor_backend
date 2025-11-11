@@ -12,6 +12,39 @@ log_ok(){ echo -e "\033[0;32m[OK]\033[0m $1"; }
 log_info(){ echo -e "\033[0;34m[INFO]\033[0m $1"; }
 log_warn(){ echo -e "\033[0;33m[WARN]\033[0m $1"; }
 
+TOTAL_STEPS=6
+CURRENT_STEP=0
+
+print_progress(){
+  local step=$1
+  local message="$2"
+  CURRENT_STEP=$step
+  local percent=$((step * 100 / TOTAL_STEPS))
+  local bar_len=40
+  local filled=$((bar_len * step / TOTAL_STEPS))
+  local empty=$((bar_len - filled))
+  printf "\r\033[2K"
+  printf "\033[1;36m[%3d%%]\033[0m [" "$percent"
+  printf "%${filled}s" | tr ' ' '█'
+  printf "%${empty}s" | tr ' ' '░'
+  printf "] \033[1;37m%s\033[0m" "$message"
+  if [ "$step" -eq "$TOTAL_STEPS" ]; then echo ""; fi
+}
+
+step_done(){
+  local message="${1:-}"
+  if [ -n "$message" ]; then
+    printf "\r\033[2K"
+    log_ok "$message"
+  fi
+}
+
+step_fail(){
+  local message="$1"
+  printf "\r\033[2K"
+  log_error "$message"
+}
+
 OS="$(uname -s)"
 USE_BREW=0
 if [[ "$OS" == "Darwin" ]] && command -v brew >/dev/null 2>&1 && brew list nginx >/dev/null 2>&1; then
@@ -22,18 +55,18 @@ if ! command -v nginx >/dev/null 2>&1; then
   log_error "nginx не установлен"; exit 1
 fi
 
-log_info "Проверка синтаксиса nginx"
+print_progress 1 "Проверка nginx..."
 if [ $USE_BREW -eq 1 ]; then
-  if nginx -t 2>&1 | tee /tmp/nginx_test_output; then
-    log_ok "Синтаксис OK (brew)"
+  if nginx -t >/tmp/nginx_test_output 2>&1; then
+    step_done "nginx синтаксис OK (brew)"
   else
-    log_error "nginx -t FAILED"; exit 1
+    step_fail "nginx -t FAILED"; cat /tmp/nginx_test_output; exit 1
   fi
 else
-  if sudo nginx -t 2>&1 | tee /tmp/nginx_test_output; then
-    log_ok "Синтаксис OK (system)"
+  if sudo nginx -t >/tmp/nginx_test_output 2>&1; then
+    step_done "nginx синтаксис OK (system)"
   else
-    log_error "sudo nginx -t FAILED"; exit 1
+    step_fail "sudo nginx -t FAILED"; cat /tmp/nginx_test_output; exit 1
   fi
 fi
 
@@ -44,29 +77,30 @@ fi
 reload_nginx(){
   if [ $USE_BREW -eq 1 ]; then
     if [ "$EUID" -eq 0 ]; then
-      log_warn "macOS brew nginx: запущено под sudo — избегайте. Использую 'nginx -s reload'"
       if nginx -s reload; then return 0; fi
       return 1
     fi
-    if brew services restart nginx; then return 0; fi
-    log_warn "brew services restart не удалось, пробую 'nginx -s reload'"
-    if nginx -s reload; then return 0; fi
+    if brew services restart nginx >/dev/null 2>&1; then return 0; fi
+    if nginx -s reload >/dev/null 2>&1; then return 0; fi
     return 1
   else
     if command -v systemctl >/dev/null 2>&1; then
-      if sudo systemctl reload nginx; then return 0; fi
-      log_warn "systemctl reload не удалось, пробую 'sudo nginx -s reload'"
+      if sudo systemctl reload nginx >/dev/null 2>&1; then return 0; fi
     fi
-    if sudo nginx -s reload; then return 0; fi
+    if sudo nginx -s reload >/dev/null 2>&1; then return 0; fi
     return 1
   fi
 }
 
-log_info "Перезагрузка nginx"
+print_progress 2 "Перезагрузка nginx..."
 if reload_nginx; then
-  log_ok "nginx reload OK"
+  if pgrep nginx >/dev/null 2>&1; then
+    step_done "nginx перезагружен и запущен"
+  else
+    step_fail "nginx не запущен"; exit 1
+  fi
 else
-  log_error "nginx reload FAILED"; exit 1
+  step_fail "nginx reload FAILED"; exit 1
 fi
 
 # Проверка что nginx запущен
@@ -83,69 +117,61 @@ if [ "${SKIP_SERVER:-0}" != "1" ]; then
   PYTHON_BIN="${PYTHON_BIN:-python3}"
   REQFILE="${REQFILE:-$APP_DIR/requirements.txt}"
 
-  log_info "Проверка Flask сервера"
-
+  print_progress 3 "Подготовка окружения..."
   # Очистка старого venv
   if [ -d "$VENVDIR" ]; then
-    log_info "Удаление старого venv"
     rm -rf "$VENVDIR"
   fi
 
-  log_info "Создание venv"
+  # Создание venv
   $PYTHON_BIN -m venv "$VENVDIR"
 
   source "$VENVDIR/bin/activate"
 
-  log_info "Обновление pip"
-  pip install --no-cache-dir --upgrade pip -q || log_warn "Не удалось обновить pip"
+  # Обновление pip
+  pip install --no-cache-dir --upgrade pip -q >/dev/null 2>&1 || true
 
   if [ -f "$REQFILE" ]; then
-    log_info "Установка зависимостей"
-    pip install --no-cache-dir -q -r "$REQFILE" || log_warn "Не удалось установить зависимости"
-  else
-    log_warn "requirements.txt не найден, пропуск установки зависимостей"
+    # Установка зависимостей
+    pip install --no-cache-dir -q -r "$REQFILE" >/dev/null 2>&1
   fi
+  step_done "venv создан, зависимости установлены"
 
+  print_progress 4 "Проверка кода..."
   if ! python -c "import server" 2>/dev/null; then
-    log_error "Импорт server.py не удался"; exit 1
+    step_fail "Импорт server.py не удался"; exit 1
   fi
-  log_ok "Импорт server.py успешен"
 
-  # Прогон тестов
   if python -c "import pytest" 2>/dev/null; then
-    log_info "Запуск тестов"
     export PYTHONPATH="$APP_DIR"
-    if pytest -q; then
-      log_ok "Тесты прошли"
+    if pytest -q >/tmp/pytest_test_output 2>&1; then
+      step_done "Импорт OK, тесты прошли"
     else
-      log_error "Тесты не прошли"; exit 1
+      step_fail "Тесты не прошли"; cat /tmp/pytest_test_output; exit 1
     fi
   else
-    log_warn "pytest не установлен, пропуск тестов"
+    step_done "Импорт OK, pytest не установлен"
   fi
 
   if lsof -nP -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
-    log_warn "Порт 8000 занят, пропуск запуска"
+    step_done "Порт 8000 занят, пропуск запуска Flask"
   else
-    log_info "Запуск Flask dev server"
+    print_progress 5 "Запуск Flask dev server..."
     python -m flask --app server run --host 127.0.0.1 --port 8000 >/tmp/flask_test.log 2>&1 &
     FLASK_PID=$!
     sleep 3
     if ps -p $FLASK_PID >/dev/null 2>&1; then
-      log_ok "Flask запущен (PID=$FLASK_PID)"
+      step_done "Flask запущен (PID=$FLASK_PID)"
+      print_progress 6 "Проверка ответа Flask..."
       if curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/auth/google | grep -qE '^[0-9]{3}$'; then
-        log_ok "Flask отвечает на запросы"
+        step_done "Flask отвечает, оставлен запущенным"
+        echo "$FLASK_PID" > /tmp/flask_test.pid
       else
-        log_warn "Flask не отвечает на запросы"
+        step_fail "Flask не отвечает на запросы"
       fi
-      log_info "Flask оставлен запущенным (остановка: kill $FLASK_PID)"
-      echo "$FLASK_PID" > /tmp/flask_test.pid
     else
-      log_error "Flask не запустился"
-      if [ -f /tmp/flask_test.log ]; then
-        log_error "Логи Flask:"
-        cat /tmp/flask_test.log
-      fi
+      step_fail "Flask не запустился"
+      if [ -f /tmp/flask_test.log ]; then cat /tmp/flask_test.log; fi
       exit 1
     fi
   fi
@@ -160,12 +186,12 @@ if [ "${VERBOSE:-0}" = "1" ]; then
   for lf in "${LOG_CANDIDATES[@]}"; do
     if [ -f "$lf" ]; then
       if [ $USE_BREW -eq 1 ]; then
-        log_info "Последние 10 строк $lf"; tail -n 10 "$lf" || true
+        echo ""; log_info "Последние 10 строк $lf"; tail -n 10 "$lf" || true
       else
         if [[ "$lf" == /var/log/nginx/error.log ]]; then
-          log_info "Последние 10 строк $lf"; sudo tail -n 10 "$lf" || true
+          echo ""; log_info "Последние 10 строк $lf"; sudo tail -n 10 "$lf" || true
         else
-          log_info "Последние 10 строк $lf"; tail -n 10 "$lf" || true
+          echo ""; log_info "Последние 10 строк $lf"; tail -n 10 "$lf" || true
         fi
       fi
       break
@@ -173,4 +199,5 @@ if [ "${VERBOSE:-0}" = "1" ]; then
   done
 fi
 
+echo ""
 log_ok "TEST DEPLOY SUCCESS"

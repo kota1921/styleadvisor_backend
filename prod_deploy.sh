@@ -18,6 +18,39 @@ log_ok(){ echo -e "\033[0;32m[OK]\033[0m $1"; }
 log_info(){ echo -e "\033[0;34m[INFO]\033[0m $1"; }
 log_warn(){ echo -e "\033[0;33m[WARN]\033[0m $1"; }
 
+TOTAL_STEPS=7
+CURRENT_STEP=0
+
+print_progress(){
+  local step=$1
+  local message="$2"
+  CURRENT_STEP=$step
+  local percent=$((step * 100 / TOTAL_STEPS))
+  local bar_len=40
+  local filled=$((bar_len * step / TOTAL_STEPS))
+  local empty=$((bar_len - filled))
+  printf "\r\033[2K"
+  printf "\033[1;36m[%3d%%]\033[0m [" "$percent"
+  printf "%${filled}s" | tr ' ' '█'
+  printf "%${empty}s" | tr ' ' '░'
+  printf "] \033[1;37m%s\033[0m" "$message"
+  if [ "$step" -eq "$TOTAL_STEPS" ]; then echo ""; fi
+}
+
+step_done(){
+  local message="${1:-}"
+  if [ -n "$message" ]; then
+    printf "\r\033[2K"
+    log_ok "$message"
+  fi
+}
+
+step_fail(){
+  local message="$1"
+  printf "\r\033[2K"
+  log_error "$message"
+}
+
 OS="$(uname -s)"
 USE_BREW=0
 if [[ "$OS" == "Darwin" ]] && command -v brew >/dev/null 2>&1 && brew list nginx >/dev/null 2>&1; then
@@ -28,18 +61,18 @@ if ! command -v nginx >/dev/null 2>&1; then
   log_error "nginx не установлен"; exit 1
 fi
 
-log_info "Проверка синтаксиса nginx"
+print_progress 1 "Проверка nginx..."
 if [ $USE_BREW -eq 1 ]; then
-  if nginx -t 2>&1 | tee /tmp/nginx_prod_output; then
-    log_ok "Синтаксис OK (brew)"
+  if nginx -t >/tmp/nginx_prod_output 2>&1; then
+    step_done "nginx синтаксис OK (brew)"
   else
-    log_error "nginx -t FAILED"; exit 1
+    step_fail "nginx -t FAILED"; cat /tmp/nginx_prod_output; exit 1
   fi
 else
-  if sudo nginx -t 2>&1 | tee /tmp/nginx_prod_output; then
-    log_ok "Синтаксис OK (system)"
+  if sudo nginx -t >/tmp/nginx_prod_output 2>&1; then
+    step_done "nginx синтаксис OK (system)"
   else
-    log_error "sudo nginx -t FAILED"; exit 1
+    step_fail "sudo nginx -t FAILED"; cat /tmp/nginx_prod_output; exit 1
   fi
 fi
 
@@ -50,35 +83,30 @@ fi
 reload_nginx(){
   if [ $USE_BREW -eq 1 ]; then
     if [ "$EUID" -eq 0 ]; then
-      log_warn "macOS brew nginx: запущено под sudo — избегайте. Использую 'nginx -s reload'"
       if nginx -s reload; then return 0; fi
       return 1
     fi
-    if brew services restart nginx; then return 0; fi
-    log_warn "brew services restart не удалось, пробую 'nginx -s reload'"
-    if nginx -s reload; then return 0; fi
+    if brew services restart nginx >/dev/null 2>&1; then return 0; fi
+    if nginx -s reload >/dev/null 2>&1; then return 0; fi
     return 1
   else
     if command -v systemctl >/dev/null 2>&1; then
-      if sudo systemctl reload nginx; then return 0; fi
-      log_warn "systemctl reload не удалось, пробую 'sudo nginx -s reload'"
+      if sudo systemctl reload nginx >/dev/null 2>&1; then return 0; fi
     fi
-    if sudo nginx -s reload; then return 0; fi
+    if sudo nginx -s reload >/dev/null 2>&1; then return 0; fi
     return 1
   fi
 }
 
-log_info "Перезагрузка nginx"
+print_progress 2 "Перезагрузка nginx..."
 if reload_nginx; then
-  log_ok "nginx reload OK"
+  if pgrep nginx >/dev/null 2>&1; then
+    step_done "nginx перезагружен и запущен"
+  else
+    step_fail "nginx не запущен"; exit 1
+  fi
 else
-  log_error "nginx reload FAILED"; exit 1
-fi
-
-if pgrep nginx >/dev/null 2>&1; then
-  log_ok "nginx запущен"
-else
-  log_error "nginx не запущен"; exit 1
+  step_fail "nginx reload FAILED"; exit 1
 fi
 
 # --- Проверка и запуск продового сервера ---
@@ -92,96 +120,70 @@ if [ "${SKIP_SERVER:-0}" != "1" ]; then
   HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8000/auth/google}"
   HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-30}"
 
-  log_info "Подготовка продового сервера"
-
-  if [ -d "$VENVDIR" ]; then
-    log_info "Удаление старого venv"
-    rm -rf "$VENVDIR"
-  fi
-
-  log_info "Создание venv"
+  print_progress 3 "Подготовка окружения..."
+  if [ -d "$VENVDIR" ]; then rm -rf "$VENVDIR"; fi
   $PYTHON_BIN -m venv "$VENVDIR"
-
   source "$VENVDIR/bin/activate"
-
-  log_info "Обновление pip"
-  pip install --no-cache-dir --upgrade pip -q || log_warn "Не удалось обновить pip"
-
+  pip install --no-cache-dir --upgrade pip -q >/dev/null 2>&1 || true
   if [ -f "$REQFILE" ]; then
-    log_info "Установка зависимостей"
-    pip install --no-cache-dir -q -r "$REQFILE" || log_warn "Не удалось установить зависимости"
-  else
-    log_warn "requirements.txt не найден, пропуск установки зависимостей"
+    pip install --no-cache-dir -q -r "$REQFILE" >/dev/null 2>&1
   fi
+  step_done "venv создан, зависимости установлены"
 
+  print_progress 4 "Проверка кода..."
   if ! python -c "import server" 2>/dev/null; then
-    log_error "Импорт server.py не удался"; exit 1
+    step_fail "Импорт server.py не удался"; exit 1
   fi
-  log_ok "Импорт server.py успешен"
+  step_done "Импорт server.py успешен"
 
-  # Прогон тестов
   if [ "${SKIP_TESTS:-0}" != "1" ]; then
+    print_progress 5 "Запуск тестов..."
     if python -c "import pytest" 2>/dev/null; then
-      log_info "Запуск тестов"
       export PYTHONPATH="$APP_DIR"
-      if pytest -q; then
-        log_ok "Тесты прошли"
+      if pytest -q >/tmp/pytest_prod_output 2>&1; then
+        step_done "Тесты прошли"
       else
-        log_error "Тесты не прошли"; exit 1
+        step_fail "Тесты не прошли"; cat /tmp/pytest_prod_output; exit 1
       fi
     else
-      log_warn "pytest не установлен, пропуск тестов"
+      step_done "pytest не установлен, пропуск"
     fi
   else
-    log_info "SKIP_TESTS=1, пропуск тестов"
+    print_progress 5 "Тесты пропущены (SKIP_TESTS=1)"
+    step_done ""
   fi
 
-  # Остановка старого Gunicorn
+  print_progress 6 "Запуск Gunicorn..."
   if [ -f /tmp/gunicorn_prod.pid ]; then
     OLD_PID=$(cat /tmp/gunicorn_prod.pid)
     if ps -p $OLD_PID >/dev/null 2>&1; then
-      log_info "Остановка старого Gunicorn (PID=$OLD_PID)"
       kill $OLD_PID 2>/dev/null || true
       sleep 2
-      if ps -p $OLD_PID >/dev/null 2>&1; then
-        log_warn "Принудительная остановка Gunicorn"
-        kill -9 $OLD_PID 2>/dev/null || true
-      fi
+      if ps -p $OLD_PID >/dev/null 2>&1; then kill -9 $OLD_PID 2>/dev/null || true; fi
     fi
     rm -f /tmp/gunicorn_prod.pid
   fi
-
-  # Проверка что порт свободен
   if lsof -nP -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
-    log_error "Порт 8000 всё ещё занят"; exit 1
+    step_fail "Порт 8000 занят"; exit 1
   fi
-
   mkdir -p "$LOG_DIR"
-  log_info "Запуск Gunicorn (production)"
   $GUNICORN_CMD --access-logfile "$LOG_DIR/access.log" --error-logfile "$LOG_DIR/error.log" --daemon
   sleep 2
-
-  # Найти PID Gunicorn
   GUNICORN_PID=$(pgrep -f "gunicorn.*server:app" | head -1)
   if [ -z "$GUNICORN_PID" ]; then
-    log_error "Gunicorn не запустился"
-    if [ -f "$LOG_DIR/error.log" ]; then
-      log_error "Логи Gunicorn:"
-      tail -n 20 "$LOG_DIR/error.log"
-    fi
+    step_fail "Gunicorn не запустился"
+    if [ -f "$LOG_DIR/error.log" ]; then tail -n 20 "$LOG_DIR/error.log"; fi
     exit 1
   fi
-
   echo "$GUNICORN_PID" > /tmp/gunicorn_prod.pid
-  log_ok "Gunicorn запущен (PID=$GUNICORN_PID)"
+  step_done "Gunicorn запущен (PID=$GUNICORN_PID)"
 
-  # Health-check
-  log_info "Health-check (timeout=${HEALTH_TIMEOUT}s)"
+  print_progress 7 "Health-check..."
   start_ts=$(date +%s)
   health_ok=0
   while true; do
     if ! ps -p $GUNICORN_PID >/dev/null 2>&1; then
-      log_error "Gunicorn процесс завершился досрочно"; exit 1
+      step_fail "Gunicorn завершился досрочно"; exit 1
     fi
     code=$(curl -s -o /dev/null -w '%{http_code}' "$HEALTH_URL" 2>/dev/null || echo "000")
     if [[ "$code" =~ ^[0-9]{3}$ ]]; then
@@ -190,16 +192,16 @@ if [ "${SKIP_SERVER:-0}" != "1" ]; then
       fi
     fi
     now=$(date +%s)
-    if [ $((now - start_ts)) -ge $HEALTH_TIMEOUT ]; then
-      log_error "Health-check провалился за ${HEALTH_TIMEOUT}s (код=$code)"; exit 1
+    elapsed=$((now - start_ts))
+    if [ $elapsed -ge $HEALTH_TIMEOUT ]; then
+      step_fail "Health-check провалился (код=$code)"; exit 1
     fi
+    print_progress 7 "Health-check... ${elapsed}/${HEALTH_TIMEOUT}s"
     sleep 1
   done
   if [ $health_ok -eq 1 ]; then
-    log_ok "Health-check успешен (код=$code)"
+    step_done "Health-check успешен (код=$code)"
   fi
-
-  log_info "Gunicorn работает (остановка: kill $GUNICORN_PID)"
 fi
 
 if [ "${VERBOSE:-0}" = "1" ]; then
@@ -211,12 +213,12 @@ if [ "${VERBOSE:-0}" = "1" ]; then
   for lf in "${LOG_CANDIDATES[@]}"; do
     if [ -f "$lf" ]; then
       if [ $USE_BREW -eq 1 ]; then
-        log_info "Последние 10 строк $lf"; tail -n 10 "$lf" || true
+        echo ""; log_info "Последние 10 строк $lf"; tail -n 10 "$lf" || true
       else
         if [[ "$lf" == /var/log/nginx/error.log ]]; then
-          log_info "Последние 10 строк $lf"; sudo tail -n 10 "$lf" || true
+          echo ""; log_info "Последние 10 строк $lf"; sudo tail -n 10 "$lf" || true
         else
-          log_info "Последние 10 строк $lf"; tail -n 10 "$lf" || true
+          echo ""; log_info "Последние 10 строк $lf"; tail -n 10 "$lf" || true
         fi
       fi
       break
@@ -224,5 +226,6 @@ if [ "${VERBOSE:-0}" = "1" ]; then
   done
 fi
 
+echo ""
 log_ok "PROD DEPLOY SUCCESS"
 
