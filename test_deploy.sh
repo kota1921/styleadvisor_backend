@@ -153,27 +153,43 @@ if [ "${SKIP_SERVER:-0}" != "1" ]; then
     step_done "Импорт OK, pytest не установлен"
   fi
 
+  # Проверка и освобождение порта 8000
   if lsof -nP -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
-    step_done "Порт 8000 занят, пропуск запуска Flask"
-  else
-    print_progress 5 "Запуск Flask dev server..."
-    python -m flask --app server run --host 127.0.0.1 --port 8000 >/tmp/flask_test.log 2>&1 &
-    FLASK_PID=$!
-    sleep 3
-    if ps -p $FLASK_PID >/dev/null 2>&1; then
-      step_done "Flask запущен (PID=$FLASK_PID)"
-      print_progress 6 "Проверка ответа Flask..."
-      if curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/auth/google | grep -qE '^[0-9]{3}$'; then
-        step_done "Flask отвечает, оставлен запущенным"
-        echo "$FLASK_PID" > /tmp/flask_test.pid
-      else
-        step_fail "Flask не отвечает на запросы"
+    # Автоматическая остановка процесса на порту 8000
+    PORT_PID=$(lsof -nP -iTCP:8000 -sTCP:LISTEN | tail -1 | awk '{print $2}')
+    if [ -n "$PORT_PID" ]; then
+      kill $PORT_PID 2>/dev/null || true
+      sleep 2
+      if lsof -nP -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
+        kill -9 $PORT_PID 2>/dev/null || true
+        sleep 1
       fi
-    else
-      step_fail "Flask не запустился"
-      if [ -f /tmp/flask_test.log ]; then cat /tmp/flask_test.log; fi
-      exit 1
     fi
+
+    # Проверка что порт освободился
+    if lsof -nP -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
+      step_fail "Порт 8000 всё ещё занят после остановки"; exit 1
+    fi
+    step_done "Порт 8000 освобождён"
+  fi
+
+  print_progress 5 "Запуск Flask dev server..."
+  python -m flask --app server run --host 127.0.0.1 --port 8000 >/tmp/flask_test.log 2>&1 &
+  FLASK_PID=$!
+  sleep 3
+  if ps -p $FLASK_PID >/dev/null 2>&1; then
+    step_done "Flask запущен (PID=$FLASK_PID)"
+    print_progress 6 "Проверка ответа Flask..."
+    if curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/auth/google | grep -qE '^[0-9]{3}$'; then
+      step_done "Flask отвечает, оставлен запущенным"
+      echo "$FLASK_PID" > /tmp/flask_test.pid
+    else
+      step_fail "Flask не отвечает на запросы"
+    fi
+  else
+    step_fail "Flask не запустился"
+    if [ -f /tmp/flask_test.log ]; then cat /tmp/flask_test.log; fi
+    exit 1
   fi
 fi
 

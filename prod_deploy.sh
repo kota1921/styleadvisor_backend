@@ -163,9 +163,24 @@ if [ "${SKIP_SERVER:-0}" != "1" ]; then
     fi
     rm -f /tmp/gunicorn_prod.pid
   fi
+
+  # Проверка и освобождение порта 8000
   if lsof -nP -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
-    step_fail "Порт 8000 занят"; exit 1
+    PORT_PID=$(lsof -nP -iTCP:8000 -sTCP:LISTEN | tail -1 | awk '{print $2}')
+    if [ -n "$PORT_PID" ]; then
+      kill $PORT_PID 2>/dev/null || true
+      sleep 2
+      if lsof -nP -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
+        kill -9 $PORT_PID 2>/dev/null || true
+        sleep 1
+      fi
+    fi
   fi
+
+  if lsof -nP -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
+    step_fail "Порт 8000 всё ещё занят после принудительной остановки"; exit 1
+  fi
+
   mkdir -p "$LOG_DIR"
   $GUNICORN_CMD --access-logfile "$LOG_DIR/access.log" --error-logfile "$LOG_DIR/error.log" --daemon
   sleep 2
