@@ -155,20 +155,33 @@ if [ "${SKIP_SERVER:-0}" != "1" ]; then
 
   # Проверка и освобождение порта 8000
   if lsof -nP -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
-    # Автоматическая остановка процесса на порту 8000
-    PORT_PID=$(lsof -nP -iTCP:8000 -sTCP:LISTEN | tail -1 | awk '{print $2}')
-    if [ -n "$PORT_PID" ]; then
-      kill $PORT_PID 2>/dev/null || true
-      sleep 2
-      if lsof -nP -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
-        kill -9 $PORT_PID 2>/dev/null || true
-        sleep 1
+    # Агрессивное освобождение порта 8000
+    MAX_ATTEMPTS=3
+    for attempt in $(seq 1 $MAX_ATTEMPTS); do
+      if ! lsof -nP -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
+        break
       fi
-    fi
 
-    # Проверка что порт освободился
+      PORT_PIDS=$(lsof -nP -iTCP:8000 -sTCP:LISTEN | tail -n +2 | awk '{print $2}' | sort -u)
+      if [ -z "$PORT_PIDS" ]; then
+        break
+      fi
+
+      for pid in $PORT_PIDS; do
+        if [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
+          kill $pid 2>/dev/null || true
+        else
+          kill -9 $pid 2>/dev/null || true
+        fi
+      done
+
+      sleep 2
+    done
+
     if lsof -nP -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
-      step_fail "Порт 8000 всё ещё занят после остановки"; exit 1
+      step_fail "Порт 8000 занят после $MAX_ATTEMPTS попыток"
+      lsof -nP -iTCP:8000 -sTCP:LISTEN
+      exit 1
     fi
     step_done "Порт 8000 освобождён"
   fi

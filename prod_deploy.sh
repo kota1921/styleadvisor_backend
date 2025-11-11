@@ -1,13 +1,14 @@
 #!/bin/bash
 # === Production deploy script ===
 # Шаги:
-# 1. Проверка nginx синтаксиса и перезагрузка.
-# 2. Очистка venv, установка зависимостей.
-# 3. Проверка импорта server.py.
-# 4. Запуск тестов.
-# 5. Остановка старого Gunicorn (если запущен).
-# 6. Запуск продового сервера Gunicorn.
-# 7. Health-check.
+# 1. Checkout ветки main.
+# 2. Проверка nginx синтаксиса и перезагрузка.
+# 3. Очистка venv, установка зависимостей.
+# 4. Проверка импорта server.py.
+# 5. Запуск тестов.
+# 6. Остановка старого Gunicorn (если запущен).
+# 7. Запуск продового сервера Gunicorn.
+# 8. Health-check.
 # Переменные: DRY_RUN=1, VERBOSE=1, SKIP_SERVER=1, SKIP_TESTS=1
 
 if [ -z "$BASH_VERSION" ]; then echo "[ERROR] Используйте bash"; exit 1; fi
@@ -18,7 +19,7 @@ log_ok(){ echo -e "\033[0;32m[OK]\033[0m $1"; }
 log_info(){ echo -e "\033[0;34m[INFO]\033[0m $1"; }
 log_warn(){ echo -e "\033[0;33m[WARN]\033[0m $1"; }
 
-TOTAL_STEPS=7
+TOTAL_STEPS=8
 CURRENT_STEP=0
 
 print_progress(){
@@ -61,7 +62,25 @@ if ! command -v nginx >/dev/null 2>&1; then
   log_error "nginx не установлен"; exit 1
 fi
 
-print_progress 1 "Проверка nginx..."
+# --- 1. Checkout main ---
+BRANCH=${BRANCH:-"main"}
+if [ -d .git ]; then
+  print_progress 1 "Обновление git (${BRANCH})..."
+  if git fetch origin "$BRANCH" >/dev/null 2>&1 && \
+     git checkout "$BRANCH" >/dev/null 2>&1 && \
+     git pull --ff-only origin "$BRANCH" >/dev/null 2>&1; then
+    step_done "git checkout ${BRANCH} успешен"
+  else
+    step_fail "git checkout/pull не удался"
+    git status
+    exit 1
+  fi
+else
+  print_progress 1 "Git репозиторий не найден..."
+  step_done "Пропуск git (запуск из копии кода)"
+fi
+
+print_progress 2 "Проверка nginx..."
 if [ $USE_BREW -eq 1 ]; then
   if nginx -t >/tmp/nginx_prod_output 2>&1; then
     step_done "nginx синтаксис OK (brew)"
@@ -98,7 +117,7 @@ reload_nginx(){
   fi
 }
 
-print_progress 2 "Перезагрузка nginx..."
+print_progress 3 "Перезагрузка nginx..."
 if reload_nginx; then
   if pgrep nginx >/dev/null 2>&1; then
     step_done "nginx перезагружен и запущен"
@@ -120,7 +139,7 @@ if [ "${SKIP_SERVER:-0}" != "1" ]; then
   HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8000/auth/google}"
   HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-30}"
 
-  print_progress 3 "Подготовка окружения..."
+  print_progress 4 "Подготовка окружения..."
   if [ -d "$VENVDIR" ]; then rm -rf "$VENVDIR"; fi
   $PYTHON_BIN -m venv "$VENVDIR"
   source "$VENVDIR/bin/activate"
@@ -130,14 +149,14 @@ if [ "${SKIP_SERVER:-0}" != "1" ]; then
   fi
   step_done "venv создан, зависимости установлены"
 
-  print_progress 4 "Проверка кода..."
+  print_progress 5 "Проверка кода..."
   if ! python -c "import server" 2>/dev/null; then
     step_fail "Импорт server.py не удался"; exit 1
   fi
   step_done "Импорт server.py успешен"
 
   if [ "${SKIP_TESTS:-0}" != "1" ]; then
-    print_progress 5 "Запуск тестов..."
+    print_progress 6 "Запуск тестов..."
     if python -c "import pytest" 2>/dev/null; then
       export PYTHONPATH="$APP_DIR"
       if pytest -q >/tmp/pytest_prod_output 2>&1; then
@@ -149,11 +168,11 @@ if [ "${SKIP_SERVER:-0}" != "1" ]; then
       step_done "pytest не установлен, пропуск"
     fi
   else
-    print_progress 5 "Тесты пропущены (SKIP_TESTS=1)"
+    print_progress 6 "Тесты пропущены (SKIP_TESTS=1)"
     step_done ""
   fi
 
-  print_progress 6 "Запуск Gunicorn..."
+  print_progress 7 "Запуск Gunicorn..."
   if [ -f /tmp/gunicorn_prod.pid ]; then
     OLD_PID=$(cat /tmp/gunicorn_prod.pid)
     if ps -p $OLD_PID >/dev/null 2>&1; then
@@ -164,21 +183,34 @@ if [ "${SKIP_SERVER:-0}" != "1" ]; then
     rm -f /tmp/gunicorn_prod.pid
   fi
 
-  # Проверка и освобождение порта 8000
-  if lsof -nP -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
-    PORT_PID=$(lsof -nP -iTCP:8000 -sTCP:LISTEN | tail -1 | awk '{print $2}')
-    if [ -n "$PORT_PID" ]; then
-      kill $PORT_PID 2>/dev/null || true
-      sleep 2
-      if lsof -nP -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
-        kill -9 $PORT_PID 2>/dev/null || true
-        sleep 1
-      fi
+  # Агрессивное освобождение порта 8000
+  MAX_ATTEMPTS=3
+  for attempt in $(seq 1 $MAX_ATTEMPTS); do
+    if ! lsof -nP -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
+      break
     fi
-  fi
+
+    # Найти все PID на порту 8000
+    PORT_PIDS=$(lsof -nP -iTCP:8000 -sTCP:LISTEN | tail -n +2 | awk '{print $2}' | sort -u)
+    if [ -z "$PORT_PIDS" ]; then
+      break
+    fi
+
+    for pid in $PORT_PIDS; do
+      if [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
+        kill $pid 2>/dev/null || true
+      else
+        kill -9 $pid 2>/dev/null || true
+      fi
+    done
+
+    sleep 2
+  done
 
   if lsof -nP -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
-    step_fail "Порт 8000 всё ещё занят после принудительной остановки"; exit 1
+    step_fail "Порт 8000 занят после $MAX_ATTEMPTS попыток"
+    lsof -nP -iTCP:8000 -sTCP:LISTEN
+    exit 1
   fi
 
   mkdir -p "$LOG_DIR"
@@ -193,7 +225,7 @@ if [ "${SKIP_SERVER:-0}" != "1" ]; then
   echo "$GUNICORN_PID" > /tmp/gunicorn_prod.pid
   step_done "Gunicorn запущен (PID=$GUNICORN_PID)"
 
-  print_progress 7 "Health-check..."
+  print_progress 8 "Health-check..."
   start_ts=$(date +%s)
   health_ok=0
   while true; do
@@ -211,7 +243,7 @@ if [ "${SKIP_SERVER:-0}" != "1" ]; then
     if [ $elapsed -ge $HEALTH_TIMEOUT ]; then
       step_fail "Health-check провалился (код=$code)"; exit 1
     fi
-    print_progress 7 "Health-check... ${elapsed}/${HEALTH_TIMEOUT}s"
+    print_progress 8 "Health-check... ${elapsed}/${HEALTH_TIMEOUT}s"
     sleep 1
   done
   if [ $health_ok -eq 1 ]; then
