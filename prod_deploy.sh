@@ -157,7 +157,15 @@ if [ "${SKIP_SERVER:-0}" != "1" ]; then
   HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-30}"
 
   print_progress 4 "Подготовка окружения..."
-  if [ -d "$VENVDIR" ]; then rm -rf "$VENVDIR"; fi
+  if [ -d "$VENVDIR" ]; then
+    # Попытка удалить обычным способом
+    if ! rm -rf "$VENVDIR" 2>/dev/null; then
+      # Если не получилось, меняем права и удаляем с sudo
+      log_warn "Требуется sudo для удаления $VENVDIR"
+      sudo chmod -R u+w "$VENVDIR" 2>/dev/null || true
+      sudo rm -rf "$VENVDIR"
+    fi
+  fi
   $PYTHON_BIN -m venv "$VENVDIR"
   source "$VENVDIR/bin/activate"
   pip install --no-cache-dir --upgrade pip -q >/dev/null 2>&1 || true
@@ -292,3 +300,4 @@ fi
 
 echo ""
 log_ok "PROD DEPLOY SUCCESS"
+
