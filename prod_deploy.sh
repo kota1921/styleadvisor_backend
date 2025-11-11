@@ -99,16 +99,16 @@ fi
 
 print_progress 2 "Проверка nginx..."
 if [ $USE_BREW -eq 1 ]; then
-  if nginx -t >/tmp/nginx_prod_output 2>&1; then
+  if nginx -t 2>&1 | tee ~/nginx_test_output >/dev/null; then
     step_done "nginx синтаксис OK (brew)"
   else
-    step_fail "nginx -t FAILED"; cat /tmp/nginx_prod_output; exit 1
+    step_fail "nginx -t FAILED"; cat ~/nginx_test_output 2>/dev/null || true; exit 1
   fi
 else
-  if sudo nginx -t >/tmp/nginx_prod_output 2>&1; then
+  if sudo nginx -t 2>&1 | tee ~/nginx_test_output >/dev/null; then
     step_done "nginx синтаксис OK (system)"
   else
-    step_fail "sudo nginx -t FAILED"; cat /tmp/nginx_prod_output; exit 1
+    step_fail "sudo nginx -t FAILED"; cat ~/nginx_test_output 2>/dev/null || true; exit 1
   fi
 fi
 
@@ -151,9 +151,9 @@ if [ "${SKIP_SERVER:-0}" != "1" ]; then
   VENVDIR="${VENVDIR:-$APP_DIR/.venv}"
   PYTHON_BIN="${PYTHON_BIN:-python3}"
   REQFILE="${REQFILE:-$APP_DIR/requirements.txt}"
-  GUNICORN_CMD="${GUNICORN_CMD:-gunicorn -w 4 server:app --bind 0.0.0.0:8000}"
+  GUNICORN_CMD="${GUNICORN_CMD:-gunicorn -w 4 server:app --bind 0.0.0.0:8080}"
   LOG_DIR="${LOG_DIR:-$APP_DIR/logs}"
-  HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8000/auth/google}"
+  HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8080/auth/google}"
   HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-30}"
 
   print_progress 4 "Подготовка окружения..."
@@ -200,15 +200,15 @@ if [ "${SKIP_SERVER:-0}" != "1" ]; then
     rm -f /tmp/gunicorn_prod.pid
   fi
 
-  # Агрессивное освобождение порта 8000
+  # Агрессивное освобождение порта 8080
   MAX_ATTEMPTS=3
   for attempt in $(seq 1 $MAX_ATTEMPTS); do
-    if ! lsof -nP -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
+    if ! lsof -nP -iTCP:8080 -sTCP:LISTEN >/dev/null 2>&1; then
       break
     fi
 
-    # Найти все PID на порту 8000
-    PORT_PIDS=$(lsof -nP -iTCP:8000 -sTCP:LISTEN | tail -n +2 | awk '{print $2}' | sort -u)
+    # Найти все PID на порту 8080
+    PORT_PIDS=$(lsof -nP -iTCP:8080 -sTCP:LISTEN | tail -n +2 | awk '{print $2}' | sort -u)
     if [ -z "$PORT_PIDS" ]; then
       break
     fi
@@ -224,9 +224,9 @@ if [ "${SKIP_SERVER:-0}" != "1" ]; then
     sleep 2
   done
 
-  if lsof -nP -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
-    step_fail "Порт 8000 занят после $MAX_ATTEMPTS попыток"
-    lsof -nP -iTCP:8000 -sTCP:LISTEN
+  if lsof -nP -iTCP:8080 -sTCP:LISTEN >/dev/null 2>&1; then
+    step_fail "Порт 8080 занят после $MAX_ATTEMPTS попыток"
+    lsof -nP -iTCP:8080 -sTCP:LISTEN
     exit 1
   fi
 
@@ -292,4 +292,3 @@ fi
 
 echo ""
 log_ok "PROD DEPLOY SUCCESS"
-
