@@ -98,6 +98,32 @@ else
 fi
 
 print_progress 2 "Проверка nginx..."
+
+# Обновление конфигурации nginx если нужно
+APP_DIR="$(pwd)"
+NGINX_CONF_SOURCE="$APP_DIR/infra/nginx_site.conf"
+DOMAIN="${DOMAIN:-fitmind.at}"
+NGINX_CONF_TARGET="/etc/nginx/sites-available/$DOMAIN.conf"
+
+if [ -f "$NGINX_CONF_SOURCE" ]; then
+  if [ $USE_BREW -eq 0 ]; then
+    # Только для system nginx (не brew)
+    if [ -f "$NGINX_CONF_TARGET" ]; then
+      # Проверяем отличается ли конфигурация
+      if ! sudo diff -q "$NGINX_CONF_SOURCE" "$NGINX_CONF_TARGET" >/dev/null 2>&1; then
+        log_info "Обновление nginx конфигурации..."
+        sudo cp "$NGINX_CONF_SOURCE" "$NGINX_CONF_TARGET"
+        sudo ln -sf "$NGINX_CONF_TARGET" "/etc/nginx/sites-enabled/$DOMAIN.conf" 2>/dev/null || true
+      fi
+    else
+      # Конфигурация не существует, создаем
+      log_info "Создание nginx конфигурации..."
+      sudo cp "$NGINX_CONF_SOURCE" "$NGINX_CONF_TARGET"
+      sudo ln -sf "$NGINX_CONF_TARGET" "/etc/nginx/sites-enabled/$DOMAIN.conf"
+    fi
+  fi
+fi
+
 if [ $USE_BREW -eq 1 ]; then
   if nginx -t 2>&1 | tee ~/nginx_test_output >/dev/null; then
     step_done "nginx синтаксис OK (brew)"
