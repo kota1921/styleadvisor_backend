@@ -184,10 +184,11 @@ if [ "${SKIP_SERVER:-0}" != "1" ]; then
     print_progress 6 "Запуск тестов..."
     if python -c "import pytest" 2>/dev/null; then
       export PYTHONPATH="$APP_DIR"
-      if pytest -q >/tmp/pytest_prod_output 2>&1; then
+      PYTEST_OUTPUT="$APP_DIR/logs/pytest_output.log"
+      if pytest -q >"$PYTEST_OUTPUT" 2>&1; then
         step_done "Тесты прошли"
       else
-        step_fail "Тесты не прошли"; cat /tmp/pytest_prod_output; exit 1
+        step_fail "Тесты не прошли"; cat "$PYTEST_OUTPUT"; exit 1
       fi
     else
       step_done "pytest не установлен, пропуск"
