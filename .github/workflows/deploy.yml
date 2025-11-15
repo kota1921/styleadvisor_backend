@@ -20,7 +20,8 @@ jobs:
           username: ${{ secrets.USER }}
           key: ${{ secrets.SSH_KEY }}
           source: "."
-          target: "~/app"
+          target: "/home/server/styleadvisor_backend"
+          strip_components: 1
 
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
@@ -29,6 +30,5 @@ jobs:
           username: ${{ secrets.USER }}
           key: ${{ secrets.SSH_KEY }}
           script: |
-            cd ~/app
-            docker compose down
-            docker compose up -d --build
+            cd /home/server/styleadvisor_backend
+            bash prod_deploy.sh
