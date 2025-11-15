@@ -36,6 +36,19 @@ with app.app_context():
     db.create_all()
 
 
+@app.route('/')
+def index():
+    return jsonify({
+        "service": "FitMind API",
+        "status": "running",
+        "endpoints": {
+            "auth": "/auth/google (POST)",
+            "logout": "/auth/logout (POST)",
+            "health": "/__nginx_alive"
+        }
+    }), 200
+
+
 @app.route('/auth/google', methods=['POST'])
 def google_auth():
     data = request.get_json(silent=True) or {}
