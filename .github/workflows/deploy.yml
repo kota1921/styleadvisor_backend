@@ -20,7 +20,8 @@ jobs:
           username: ${{ secrets.USER }}
           key: ${{ secrets.SSH_KEY }}
           source: "."
-          target: "~/styleadvisor_backend"
+          target: "/home/server/styleadvisor_backend"
+          strip_components: 1
 
       - name: Deploy and restart containers
         uses: appleboy/ssh-action@v1.0.3
@@ -29,6 +30,6 @@ jobs:
           username: ${{ secrets.USER }}
           key: ${{ secrets.SSH_KEY }}
           script: |
-            cd ~/styleadvisor_backend
+            cd /home/server/styleadvisor_backend
             docker compose down
             docker compose up -d --build
