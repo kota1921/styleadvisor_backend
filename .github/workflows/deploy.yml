@@ -10,25 +10,25 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Copy files to server
+      - name: Copy project files to server
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USER }}
           key: ${{ secrets.SSH_KEY }}
           source: "."
-          target: "/home/server/styleadvisor_backend"
-          strip_components: 1
+          target: "~/styleadvisor_backend"
 
-      - name: Deploy via SSH
+      - name: Deploy and restart containers
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USER }}
           key: ${{ secrets.SSH_KEY }}
           script: |
-            cd /home/server/styleadvisor_backend
-            bash prod_deploy.sh
+            cd ~/styleadvisor_backend
+            docker compose down
+            docker compose up -d --build
